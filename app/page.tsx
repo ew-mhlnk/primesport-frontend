@@ -1,6 +1,7 @@
 import Header from '@/components/Header';
 import HeroLive from '@/components/HeroLive';
 import BroadcastCarousel from '@/components/BroadcastCarousel';
+import ScheduleWidget from '@/components/ScheduleWidget';
 import { WPPost } from '@/types';
 
 export const revalidate = 0;
@@ -33,11 +34,12 @@ export default async function Home() {
 
       <BroadcastCarousel posts={posts} />
 
-      <section id="schedule" className="py-12 px-4 md:px-16 max-w-7xl mx-auto">
-        <h2 className="text-2xl md:text-4xl font-bold text-white mb-8">Расписание</h2>
-        <div className="bg-zinc-900 rounded-[40px] p-8 border border-white/5">
-           <p className="text-zinc-500">Сетка турниров скоро появится...</p>
-        </div>
+      <section id="schedule" className="py-12 px-4 lg:px-18.75 max-w-480 mx-auto">
+        <h2 className="text-3xl lg:text-[40px] font-sans font-bold text-white mb-6 tracking-tight drop-shadow-md">
+          Расписание матчей
+        </h2>
+        
+        <ScheduleWidget />
       </section>
     </main>
   );

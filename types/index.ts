@@ -30,3 +30,23 @@ export interface WPPost {
     commentator?: string;
   };
 }
+
+// ✅ Шаг 8 — Обновлённый FormattedMatch
+export interface FormattedMatch {
+  id:             number;
+  time:           string;
+  player1:        string;   // уже по-русски
+  player2:        string;
+  player1Flag:    string;   // "AU"
+  player2Flag:    string;
+  tournament:     string;   // уже по-русски
+  tournamentMeta?: {
+    surface?:  string;
+    category?: string;
+    city?:     string;
+  };
+  status:         string;
+  score:          string;
+  dateLabel:      string;
+  rawTimestamp:   number;
+}
