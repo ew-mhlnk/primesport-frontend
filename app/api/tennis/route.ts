@@ -5,7 +5,9 @@ import { getPlayersMap }     from '@/lib/playersCache';
 import { getTournamentsMap } from '@/lib/tournamentsCache';
 import { initTennisWs }      from '@/lib/tennisWs';
 
-export const revalidate = 15;
+// 👇 ДОБАВЛЕНЫ ДВЕ СТРОЧКИ — ОТКЛЮЧАЕМ КЭШ РОУТА:
+export const dynamic = 'force-dynamic';
+export const revalidate = 0; // 0 означает полное отключение кэша роута
 
 export interface FormattedMatch {
   id:             number;
@@ -127,7 +129,8 @@ export async function GET(request: Request) {
     const fetchDay = async (dateStr: string): Promise<RawMatch[]> => {
       const url = `https://api.api-tennis.com/tennis/?method=get_fixtures&APIkey=${apiKey}&date_start=${dateStr}&date_stop=${dateStr}`;
       
-      const res = await fetch(url, { next: { revalidate: 15 } });
+      // ✅ ИЗМЕНЕНО: убрали next: { revalidate: 15 }, теперь всегда свежие данные
+      const res = await fetch(url, { cache: 'no-store' });
       
       if (!res.ok) {
         console.error(`❌ Ошибка HTTP ${res.status} при запросе за ${dateStr}`);
