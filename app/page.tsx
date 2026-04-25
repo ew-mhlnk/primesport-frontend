@@ -8,29 +8,29 @@ export const revalidate = 0;
 
 async function getPosts(): Promise<WPPost[]> {
   try {
-    // Внимание: ?_embed здесь крайне важен для получения картинок
     const res = await fetch(`${process.env.NEXT_PUBLIC_WP_API}/posts?_embed`);
-    if (!res.ok) return[];
+    if (!res.ok) return [];
     return res.json();
   } catch (error) {
-    console.error("Ошибка API:", error);
-    return[];
+    console.error('Ошибка API:', error);
+    return [];
   }
 }
 
 export default async function Home() {
   const posts = await getPosts();
 
-  // Ищем матч, у которого статус live (или старая галочка is_live)
-  const mainLivePost = posts.find(p => p.acf?.match_status === 'live' || p.acf?.is_live) || (posts.length > 0 ? posts[0] : null);
+  // Hero: prefer a live post, else fall back to first post
+  const mainLivePost =
+    posts.find(p => p.acf?.match_status === 'live' || p.acf?.is_live) ??
+    (posts.length > 0 ? posts[0] : null);
 
   return (
     <main className="min-h-screen bg-zinc-950 text-white">
       <Header />
-      
-      <div className="pt-0">
-        <HeroLive post={mainLivePost} /> 
-      </div>
+
+      {/* HeroLive: pt-0, header is fixed so it overlays the hero */}
+      <HeroLive post={mainLivePost} relatedPosts={posts} />
 
       <BroadcastCarousel posts={posts} />
 
@@ -38,7 +38,6 @@ export default async function Home() {
         <h2 className="text-3xl lg:text-[40px] font-sans font-bold text-white mb-6 tracking-tight drop-shadow-md">
           Расписание матчей
         </h2>
-        
         <ScheduleWidget />
       </section>
     </main>

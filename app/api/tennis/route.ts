@@ -3,6 +3,7 @@
 import { NextResponse } from 'next/server';
 import { getPlayersMap }     from '@/lib/playersCache';
 import { getTournamentsMap } from '@/lib/tournamentsCache';
+import { initTennisWs }      from '@/lib/tennisWs'; // ✅ ДОБАВЛЕН ИМПОРТ
 
 export const revalidate = 15;
 
@@ -36,7 +37,11 @@ interface RawMatch {
   event_status:        string;
   event_live:          string;
   event_final_result?: string;
-  event_game_result?:  string;
+  event_game_result?: string;
+  scores?: Array<{
+    score_first: string;
+    score_second: string;
+  }>;
 }
 
 function translateStatus(status: string) {
@@ -78,6 +83,9 @@ function getMskDate(offsetDays: number) {
 }
 
 export async function GET(request: Request) {
+  // 🔥 Запускаем фоновый вебсокет (запустится только 1 раз благодаря global)
+  initTennisWs(); // ✅ ВЫЗОВ В САМОМ НАЧАЛЕ
+
   try {
     const apiKey = process.env.SPORTS_API_KEY;
     
@@ -222,13 +230,20 @@ export async function GET(request: Request) {
         const p1    = lookupPlayer(p1raw);
         const p2    = lookupPlayer(p2raw);
         
-        // ✅ Прямой доступ к турниру по составному ключу
         const tourKey = `${match.tournament_name?.toLowerCase().trim()}__${normalizeType(match.event_type_type)}`;
         const tour    = tournaments[tourKey] ?? tournaments[match.tournament_name?.toLowerCase().trim()] ?? null;
 
         // Логируем незнакомых игроков
         if (!p1) console.warn(`⚠️ Игрок не в БД: "${p1raw}"`);
         if (!p2) console.warn(`⚠️ Игрок не в БД: "${p2raw}"`);
+
+        // ✅ ИСПРАВЛЕНИЕ: Парсим массив `scores`, если он есть
+        let finalScore = match.event_final_result || match.event_game_result || '';
+        if (match.scores && Array.isArray(match.scores) && match.scores.length > 0) {
+          finalScore = match.scores
+            .map(s => `${s.score_first}-${s.score_second}`)
+            .join(', ');
+        }
 
         const formattedMatch: FormattedMatch = {
           id:            Number(match.event_key),
@@ -244,7 +259,7 @@ export async function GET(request: Request) {
             city:     tour.city,
           } : undefined,
           status:        translateStatus(match.event_status),
-          score:         match.event_final_result || match.event_game_result || '',
+          score:         finalScore,
           dateLabel,
           rawTimestamp:  new Date(`${match.event_date}T${match.event_time}`).getTime(),
         };
