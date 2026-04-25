@@ -3,7 +3,7 @@
 import { NextResponse } from 'next/server';
 import { getPlayersMap }     from '@/lib/playersCache';
 import { getTournamentsMap } from '@/lib/tournamentsCache';
-import { initTennisWs }      from '@/lib/tennisWs'; // ✅ ДОБАВЛЕН ИМПОРТ
+import { initTennisWs }      from '@/lib/tennisWs';
 
 export const revalidate = 15;
 
@@ -84,7 +84,7 @@ function getMskDate(offsetDays: number) {
 
 export async function GET(request: Request) {
   // 🔥 Запускаем фоновый вебсокет (запустится только 1 раз благодаря global)
-  initTennisWs(); // ✅ ВЫЗОВ В САМОМ НАЧАЛЕ
+  initTennisWs();
 
   try {
     const apiKey = process.env.SPORTS_API_KEY;
@@ -157,39 +157,37 @@ export async function GET(request: Request) {
     // Убираем дубли по event_key
     const uniqueMatches = Array.from(new Map(rawMatches.map(m => [m.event_key, m])).values());
 
-    // ✅ ВРЕМЕННЫЙ ЛОГ — отладка фильтрации
     console.log('🔑 Tournament keys in cache:', Object.keys(tournaments));
     console.log('📋 Sample match:', JSON.stringify({
       tournament_name: uniqueMatches[0]?.tournament_name,
       event_type_type: uniqueMatches[0]?.event_type_type,
     }, null, 2));
 
-    // 🎾 Доп. лог для Madrid
-    const madridMatches = uniqueMatches.filter((m: any) => 
-      m.tournament_name?.toLowerCase().includes('madrid')
-    );
-    console.log('🎾 Madrid matches found:', madridMatches.length);
-    if (madridMatches[0]) {
-      console.log('🎾 Madrid sample:', JSON.stringify({
-        tournament_name: madridMatches[0].tournament_name,
-        event_type_type: madridMatches[0].event_type_type,
-      }));
-    }
-
-    // ✅ ФИЛЬТРАЦИЯ — показываем ТОЛЬКО матчи с турнирами из БД
+    // ✅ УМНАЯ ФИЛЬТРАЦИЯ (Частичное совпадение)
     uniqueMatches
       .filter((m: any) => {
+        const apiName = m.tournament_name?.toLowerCase().trim() || '';
         const typeNorm = normalizeType(m.event_type_type);
-        const keyWithType = `${m.tournament_name?.toLowerCase().trim()}__${typeNorm}`;
-        const keyWithout = m.tournament_name?.toLowerCase().trim();
-        const result = tournaments[keyWithType] !== undefined || tournaments[keyWithout] !== undefined;
         
-        // Логируем только Madrid
-        if (m.tournament_name === 'Madrid') {
-          console.log('🔍 Madrid filter:', { keyWithType, keyWithout, result, inCache: !!tournaments[keyWithType] });
-        }
-        
-        return result;
+        // Ищем, есть ли в нашей БД турнир, название которого СОДЕРЖИТСЯ в названии из API
+        // Например: в БД "madrid", а API прислал "mutua madrid open"
+        const matchedDbKey = Object.keys(tournaments).find(dbKey => {
+          const [dbName, dbType] = dbKey.split('__'); // Разбиваем составной ключ
+          
+          // Проверяем, что английское название из БД есть внутри названия из API
+          const nameMatches = apiName.includes(dbName);
+          // Если в БД указан тип (atp/wta), проверяем и его
+          const typeMatches = !dbType || dbType === typeNorm;
+
+          return nameMatches && typeMatches;
+        });
+
+        // ВРЕМЕННЫЙ ЛОГ для дебага: раскомментируйте, если хотите увидеть, что отсекается
+        // if (apiName.includes('madrid')) {
+        //   console.log(`🎾 Дебаг Мадрида -> API: "${apiName}", Найдено в БД: ${!!matchedDbKey}`);
+        // }
+
+        return !!matchedDbKey; // Если нашли совпадение - пропускаем матч
       })
       .forEach((match: RawMatch) => {
         const isLive = match.event_live === "1";
@@ -230,8 +228,14 @@ export async function GET(request: Request) {
         const p1    = lookupPlayer(p1raw);
         const p2    = lookupPlayer(p2raw);
         
-        const tourKey = `${match.tournament_name?.toLowerCase().trim()}__${normalizeType(match.event_type_type)}`;
-        const tour    = tournaments[tourKey] ?? tournaments[match.tournament_name?.toLowerCase().trim()] ?? null;
+        // ✅ ОБНОВЛЕННЫЙ ПОИСК ТУРНИРА (для перевода на русский)
+        const apiName = match.tournament_name?.toLowerCase().trim() || '';
+        const typeNorm = normalizeType(match.event_type_type);
+        const matchedDbKey = Object.keys(tournaments).find(dbKey => {
+          const [dbName, dbType] = dbKey.split('__');
+          return apiName.includes(dbName) && (!dbType || dbType === typeNorm);
+        });
+        const tour = matchedDbKey ? tournaments[matchedDbKey] : null;
 
         // Логируем незнакомых игроков
         if (!p1) console.warn(`⚠️ Игрок не в БД: "${p1raw}"`);
