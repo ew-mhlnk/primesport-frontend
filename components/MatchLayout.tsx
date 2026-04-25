@@ -6,18 +6,29 @@ import TelegramWidget from '@/components/TelegramWidget';
 import Link from 'next/link';
 import { ChevronLeft } from 'lucide-react';
 import { WPPost } from '@/types';
+import { motion, AnimatePresence } from 'framer-motion';
 
 /* ─── Donation Modal ─── */
 function DonationModal({ onClose }: { onClose: () => void }) {
   return (
-    <div
-      className="fixed inset-0 z-100 flex items-end sm:items-center justify-center p-4"
-      onClick={onClose}
-    >
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
-      <div
-        className="relative w-full max-w-sm bg-[#0e0e0e] border border-white/10 rounded-4xl p-6 flex flex-col gap-4 shadow-2xl"
-        onClick={e => e.stopPropagation()}
+    <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-4 sm:p-6">
+      {/* Фон (затемнение) */}
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.2 }}
+        className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+        onClick={onClose}
+      />
+      
+      {/* Само окно */}
+      <motion.div
+        initial={{ opacity: 0, y: 40, scale: 0.95 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 20, scale: 0.95 }}
+        transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+        className="relative w-full max-w-sm bg-[#0e0e0e] border border-white/10 rounded-[32px] p-6 flex flex-col gap-4 shadow-2xl"
       >
         <div className="flex items-center justify-between mb-1">
           <h3 className="text-white text-[18px] font-bold">Поддержать трансляцию</h3>
@@ -74,7 +85,7 @@ function DonationModal({ onClose }: { onClose: () => void }) {
             <path d="M7 17L17 7M17 7H7M17 7v10" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </a>
-      </div>
+      </motion.div>
     </div>
   );
 }
@@ -126,21 +137,34 @@ function DonateButton({ onClick }: { onClick: () => void }) {
   );
 }
 
-/* ─── Main ─── */
-export default function MatchLayout({ post }: { post: WPPost }) {
-  const [donationOpen, setDonationOpen] = useState(false);
+/* ─── Donation Widget (Изолирует состояние!) ─── */
+function DonationWidget() {
+  const [isOpen, setIsOpen] = useState(false);
+  
+  return (
+    <>
+      <DonateButton onClick={() => setIsOpen(true)} />
+      <AnimatePresence>
+        {isOpen && <DonationModal onClose={() => setIsOpen(false)} />}
+      </AnimatePresence>
+    </>
+  );
+}
 
+/* ─── Main MatchLayout ─── */
+export default function MatchLayout({ post }: { post: WPPost }) {
   const isLive      = post.acf?.match_status === 'live' || post.acf?.is_live;
   const matchTitle  = post.acf?.match_subtitle || post.title.rendered;
   const tournament  = post.acf?.match_tournament || post.acf?.tournament;
   const commentator = post.acf?.match_commentator || post.acf?.commentator;
+  
+  const telegramPostUrl = post.acf?.match_telegram_discussion;
 
   return (
     <main className="min-h-screen bg-zinc-950 text-white">
       <Header />
 
       <div className="pt-20 lg:pt-24">
-
         {/* Кнопка назад */}
         <div className="px-4 sm:px-6 lg:px-10 py-4">
           <Link
@@ -154,21 +178,21 @@ export default function MatchLayout({ post }: { post: WPPost }) {
 
         {/* Основной контент */}
         <div className="px-4 sm:px-6 lg:px-10 xl:px-16">
-          <div className="max-w-400 mx-auto">
+          <div className="max-w-[1400px] mx-auto">
             <div className="flex flex-col lg:flex-row gap-4 lg:gap-6 items-start">
 
               {/* Левая колонка: плеер + мета */}
               <div className="w-full lg:flex-1 min-w-0 flex flex-col gap-4 lg:gap-6">
 
-                {/* Плеер */}
+                {/* Плеер - ИСПРАВЛЕННЫЙ РАЗМЕР */}
                 <div className="w-full aspect-video bg-[#0a0a0a] rounded-2xl lg:rounded-4xl overflow-hidden border border-white/6 relative">
                   {post.acf?.match_embed ? (
                     <div
-                      className="w-full h-full [&>iframe]:w-full [&>iframe]:h-full [&>iframe]:border-0"
+                      className="absolute inset-0 w-full h-full [&_iframe]:w-full [&_iframe]:h-full [&_iframe]:absolute [&_iframe]:inset-0 [&_iframe]:border-0"
                       dangerouslySetInnerHTML={{ __html: post.acf.match_embed }}
                     />
                   ) : (
-                    <div className="w-full h-full flex items-center justify-center">
+                    <div className="absolute inset-0 flex items-center justify-center">
                       <span className="text-[#333] text-[15px] font-medium">Плеер недоступен</span>
                     </div>
                   )}
@@ -205,17 +229,25 @@ export default function MatchLayout({ post }: { post: WPPost }) {
               </div>
 
               {/* Правая колонка: чат + донат */}
-              <div className="w-full lg:w-95 xl:w-105 shrink-0 flex flex-col gap-4">
+              <div className="w-full lg:w-96 xl:w-[420px] shrink-0 flex flex-col gap-4">
                 <h2 className="text-white text-[16px] font-bold lg:hidden">
                   Обсуждение матча
                 </h2>
-                <div
-                  className="w-full rounded-2xl lg:rounded-4xl overflow-hidden border border-white/6 bg-[#0a0a0a]"
-                  style={{ height: 'clamp(320px, 42vw, 600px)' }}
-                >
-                  <TelegramWidget postUrl="durov/43" />
+                
+                {/* ✅ Убрали жесткие рамки, overflow-hidden и фиксированную высоту */}
+                <div className="w-full">
+                  {telegramPostUrl ? (
+                    <TelegramWidget postUrl={telegramPostUrl} />
+                  ) : (
+                    // Заглушка, если чат не подключен (оставляем её визуально аккуратной)
+                    <div className="w-full h-32 rounded-2xl border border-white/6 bg-[#0a0a0a] flex items-center justify-center p-4 text-center">
+                      <span className="text-zinc-600 text-sm font-medium">Обсуждение для этого матча не подключено</span>
+                    </div>
+                  )}
                 </div>
-                <DonateButton onClick={() => setDonationOpen(true)} />
+
+                {/* Теперь виджет доната изолирован и не перезагружает плеер! */}
+                <DonationWidget />
               </div>
 
             </div>
@@ -224,8 +256,6 @@ export default function MatchLayout({ post }: { post: WPPost }) {
 
         <div className="h-16 lg:h-24" />
       </div>
-
-      {donationOpen && <DonationModal onClose={() => setDonationOpen(false)} />}
     </main>
   );
 }

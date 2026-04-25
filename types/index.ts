@@ -21,7 +21,8 @@ export interface WPPost {
     match_status?: string; // "live", "finished" и т.д.
     match_tournament?: string;
     match_commentator?: string;
-    
+    match_telegram_discussion?: string; // ✅ НОВОЕ ПОЛЕ — ссылка на Telegram-чат
+
     // Оставим старые поля на случай, если какие-то посты еще не переведены:
     video_url?: string;
     cover_image?: string;
