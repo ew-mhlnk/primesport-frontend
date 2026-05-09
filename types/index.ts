@@ -3,44 +3,51 @@ export interface WPRendered {
 }
 
 export interface WPPost {
-  id: number;
-  title: WPRendered;
-  content?: WPRendered;
-  slug: string;
+  id:             number;
+  title:          WPRendered;
+  content?:       WPRendered;
+  slug:           string;
+  date:           string;   // ISO 8601 — дата публикации поста
+  modified?:      string;
   featured_media?: number;
   _embedded?: {
     'wp:featuredmedia'?: Array<{
-      source_url: string;
+      source_url:   string;
+      alt_text?:    string;
+      media_details?: {
+        sizes?: {
+          medium_large?: { source_url: string };
+          large?:        { source_url: string };
+          full?:         { source_url: string };
+        };
+      };
     }>;
   };
   acf?: {
-    match_subtitle?: string;
-    match_cover?: number | string; 
-    match_embed?: string;
-    match_sport?: string;
-    match_status?: string; // "live", "finished" и т.д.
-    match_tournament?: string;
-    match_commentator?: string;
-    match_telegram_discussion?: string; // ✅ НОВОЕ ПОЛЕ — ссылка на Telegram-чат
-
-    // Оставим старые поля на случай, если какие-то посты еще не переведены:
-    video_url?: string;
-    cover_image?: string;
-    is_live?: boolean;
-    tournament?: string;
-    commentator?: string;
+    match_subtitle?:              string;
+    match_cover?:                 number | string;
+    match_embed?:                 string;
+    match_sport?:                 string;
+    match_status?:                string;
+    match_tournament?:            string;
+    match_commentator?:           string;
+    match_telegram_discussion?:   string;
+    video_url?:                   string;
+    cover_image?:                 string;
+    is_live?:                     boolean;
+    tournament?:                  string;
+    commentator?:                 string;
   };
 }
 
-// ✅ Шаг 8 — Обновлённый FormattedMatch
 export interface FormattedMatch {
   id:             number;
   time:           string;
-  player1:        string;   // уже по-русски
+  player1:        string;
   player2:        string;
-  player1Flag:    string;   // "AU"
+  player1Flag:    string;
   player2Flag:    string;
-  tournament:     string;   // уже по-русски
+  tournament:     string;
   tournamentMeta?: {
     surface?:  string;
     category?: string;
