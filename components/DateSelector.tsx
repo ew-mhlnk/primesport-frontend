@@ -1,11 +1,8 @@
-
-
 'use client';
 
-import { useState } from 'react';
-
+// components/DateSelector.tsx
 interface Props {
-  selectedDate: string;           // "2026-04-21"
+  selectedDate: string;
   onChange: (date: string) => void;
 }
 
@@ -45,7 +42,6 @@ export default function DateSelector({ selectedDate, onChange }: Props) {
               : 'bg-[#111] border-[#1e1e1e] text-[#555] hover:border-[#333] hover:text-white',
           ].join(' ')}
         >
-          {/* Иконка календаря — только у активного */}
           {selectedDate === d.value && (
             <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none">
               <rect x="3" y="5" width="18" height="17" rx="3" stroke="currentColor" strokeWidth="1.8"/>

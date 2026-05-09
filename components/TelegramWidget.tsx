@@ -14,7 +14,7 @@ export default function TelegramWidget({ postUrl }: { postUrl: string }) {
     script.src = 'https://telegram.org/js/telegram-widget.js?22';
     script.setAttribute('data-telegram-discussion', postUrl);
     script.setAttribute('data-comments-limit', '5');
-    script.setAttribute('data-color', 'E22F38'); // Цвет кнопки
+    script.setAttribute('data-color', '2563EB');
     script.setAttribute('data-dark', '1'); // Темная тема
     script.async = true;
 

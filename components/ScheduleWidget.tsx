@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '@/lib/supabase';
 
@@ -32,23 +32,22 @@ interface MatchesState {
   finished: FormattedMatch[];
 }
 
-interface SetScore {
+interface ParsedSet {
   p1: string;
   p2: string;
+  tb1?: string;
+  tb2?: string;
   finished: boolean;
 }
 
-// ✅ Тип для лайв-обновлений от Supabase
 interface ScoreUpdatePayload {
   event_key: number;
-  scores?: Array<{
-    score_first: string;
-    score_second: string;
-  }>;
+  scores?: Array<{ score_first: string; score_second: string }>;
   event_final_result?: string;
   event_game_result?: string;
   event_status?: string;
   event_serve?: string;
+  serving?: '1' | '2' | null;
 }
 
 // ─── Utils ────────────────────────────────────────────────────────────────────
@@ -70,13 +69,33 @@ function dateLabel(dateStr: string): string {
   return `${d}.${m}.${y}`;
 }
 
-function parseSets(score: string, isLive: boolean): SetScore[] {
+function parseSets(score: string, isLive: boolean): ParsedSet[] {
   if (!score) return [];
-  const parts = score.split(',');
-  return parts.map((part, idx) => {
-    const [a, b] = part.trim().split('-');
-    return { p1: a ?? '0', p2: b ?? '0', finished: isLive ? idx < parts.length - 1 : true };
+  const clean = score.replace(/\s*\([A-Z0-9]+ ?- ?[A-Z0-9]+\)\s*$/, '').trim();
+  if (!clean) return [];
+
+  return clean.split(',').map((part, idx, arr) => {
+    const s = part.trim();
+    const tbMatch = s.match(/^(\d+)-(\d+)\((\d+)\)$/);
+    if (tbMatch) {
+      const p1 = tbMatch[1], p2 = tbMatch[2], tb = tbMatch[3];
+      const p1Won = parseInt(p1) > parseInt(p2);
+      return {
+        p1, p2,
+        tb1: p1Won ? undefined : tb,
+        tb2: p1Won ? tb : undefined,
+        finished: isLive ? idx < arr.length - 1 : true,
+      };
+    }
+    const [a, b] = s.split('-');
+    return { p1: a ?? '0', p2: b ?? '0', finished: isLive ? idx < arr.length - 1 : true };
   });
+}
+
+function extractGameScore(score: string): { p1: string; p2: string } | null {
+  const m = score.match(/\(([A-Z0-9]+)\s*-\s*([A-Z0-9]+)\)\s*$/);
+  if (!m) return null;
+  return { p1: m[1].trim(), p2: m[2].trim() };
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
@@ -94,7 +113,6 @@ export default function ScheduleWidget() {
   const availDates    = tab === 'upcoming' ? upcomingDates : finishedDates;
   const hasCalendar   = tab !== 'live';
 
-  // fetch
   const load = async () => {
     try {
       const res = await fetch('/api/tennis');
@@ -111,11 +129,7 @@ export default function ScheduleWidget() {
     finally { setLoading(false); }
   };
 
-  useEffect(() => {
-    load();
-    const iv = setInterval(load, 15000);
-    return () => clearInterval(iv);
-  }, []);
+  useEffect(() => { load(); const iv = setInterval(load, 15000); return () => clearInterval(iv); }, []);
 
   useEffect(() => {
     const h = (e: MouseEvent) => {
@@ -125,59 +139,46 @@ export default function ScheduleWidget() {
     return () => document.removeEventListener('mousedown', h);
   }, []);
 
-  // ✅ Подписка на лайв-обновления через Supabase Broadcast
   useEffect(() => {
     const channel = supabase.channel('tennis-live-scores');
+    channel.on('broadcast', { event: 'score_update' }, ({ payload }) => {
+      const updates = (Array.isArray(payload) ? payload : [payload]) as ScoreUpdatePayload[];
+      setMatches(prev => {
+        const newLive = [...prev.live];
+        let modified = false;
+        updates.forEach(upd => {
+          const idx = newLive.findIndex(m => m.id === upd.event_key);
+          if (idx === -1) return;
 
-    channel
-      .on('broadcast', { event: 'score_update' }, ({ payload }) => {
-        const updates = Array.isArray(payload) ? payload : [payload] as ScoreUpdatePayload[];
-        
-        setMatches((prev) => {
-          const newLive = [...prev.live];
-          let modified = false;
+          let newScore = '';
+          if (upd.event_final_result && upd.event_final_result !== '-' && upd.event_final_result !== '0 - 0') {
+            newScore = upd.event_final_result;
+          } else if (upd.scores?.length) {
+            newScore = upd.scores.map(s => `${s.score_first}-${s.score_second}`).join(', ');
+          }
 
-          updates.forEach((upd: ScoreUpdatePayload) => {
-            const idx = newLive.findIndex((m) => m.id === upd.event_key);
-            if (idx !== -1) {
-              // 1. Формируем счет
-              let newScore = '';
-              if (upd.scores && Array.isArray(upd.scores) && upd.scores.length > 0) {
-                newScore = upd.scores.map((s) => `${s.score_first}-${s.score_second}`).join(', ');
-              } else {
-                newScore = upd.event_final_result || '';
-              }
-              
-              // Добавляем счет в текущем гейме (например "15 - 30")
-              if (upd.event_game_result && upd.event_game_result !== '-' && upd.event_game_result !== '0 - 0') {
-                 newScore += ` (${upd.event_game_result})`;
-              }
+          if (upd.event_game_result && upd.event_game_result !== '-' && upd.event_game_result !== '0 - 0') {
+            newScore += ` (${upd.event_game_result})`;
+          }
 
-              // 2. Обновляем статус
-              newLive[idx].score = newScore;
-              newLive[idx].status = upd.event_status || newLive[idx].status;
-              
-              // 3. Обновляем того, кто подает
-              if (upd.event_serve === 'First Player') newLive[idx].serving = '1';
-              else if (upd.event_serve === 'Second Player') newLive[idx].serving = '2';
-              else newLive[idx].serving = null;
-              
-              modified = true;
-            }
-          });
-
-          return modified ? { ...prev, live: newLive } : prev;
+          newLive[idx] = {
+            ...newLive[idx],
+            score:  newScore,
+            status: upd.event_status || newLive[idx].status,
+            serving: upd.serving !== undefined
+              ? upd.serving
+              : upd.event_serve === 'First Player' ? '1'
+              : upd.event_serve === 'Second Player' ? '2'
+              : null,
+          };
+          modified = true;
         });
-      })
-      .subscribe();
-
-    // Отписываемся при уходе со страницы
-    return () => {
-      void supabase.removeChannel(channel); // ✅ ИСПРАВЛЕНО: void для unused expression
-    };
+        return modified ? { ...prev, live: newLive } : prev;
+      });
+    }).subscribe();
+    return () => { void supabase.removeChannel(channel); };
   }, []);
 
-  // filter by date
   const raw = matches[tab] || [];
   const filtered = tab === 'live' ? raw : raw.filter(m => {
     if (!m.rawTimestamp) return m.dateLabel === dateLabel(selDate);
@@ -186,42 +187,37 @@ export default function ScheduleWidget() {
     return d === selDate;
   });
 
-  // group by tournament
   const groups = new Map<string, FormattedMatch[]>();
   filtered.forEach(m => {
     if (!groups.has(m.tournament)) groups.set(m.tournament, []);
     groups.get(m.tournament)!.push(m);
   });
 
+  // ✅ ИСПРАВЛЕНО: заменен тернарный оператор на if-else для устранения предупреждения линтера
   const toggleGroup = (key: string) => setOpenGroups(prev => {
     const n = new Set(prev);
-    n.has(key) ? n.delete(key) : n.add(key);
+    if (n.has(key)) {
+      n.delete(key);
+    } else {
+      n.add(key);
+    }
     return n;
   });
 
-  const dateIdx   = availDates.indexOf(selDate);
-  const canPrev   = dateIdx > 0;
-  const canNext   = dateIdx < availDates.length - 1;
+  const dateIdx = availDates.indexOf(selDate);
 
   return (
     <section className="w-full">
-
-      {/* ── Header row ── */}
       <div className="flex items-center justify-between gap-3 mb-8 flex-wrap">
-
-        {/* Pill tabs */}
         <div className="flex items-center bg-[#111] border border-[#1f1f1f] rounded-full p-1 gap-0.5">
           {(['upcoming','live','finished'] as Tab[]).map(t => (
             <TabPill key={t} value={t} active={tab === t} onClick={() => { setTab(t); setSelDate(getMskDate(0)); }} />
           ))}
         </div>
 
-        {/* Date nav */}
         {hasCalendar && (
           <div className="flex items-center gap-2" ref={pickerRef}>
-            <NavBtn disabled={!canPrev} dir="left"  onClick={() => setSelDate(availDates[dateIdx - 1])} />
-
-            {/* Date pill */}
+            <NavBtn disabled={dateIdx <= 0} dir="left" onClick={() => setSelDate(availDates[dateIdx - 1])} />
             <div className="relative">
               <button
                 onClick={() => setShowPicker(v => !v)}
@@ -230,12 +226,11 @@ export default function ScheduleWidget() {
                 <svg className="w-4 h-4 text-[#555] group-hover:text-[#777] transition-colors" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round">
                   <rect x="3" y="4" width="18" height="18" rx="3"/><path d="M16 2v4M8 2v4M3 10h18"/>
                 </svg>
-                <span className="text-white text-[14px] font-semibold tracking-tight">{dateLabel(selDate)}</span>
+                <span className="text-white text-[14px] font-bold tracking-tight">{dateLabel(selDate)}</span>
                 <svg className={`w-3.5 h-3.5 text-[#444] transition-transform duration-200 ${showPicker ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
                   <path d="M6 9l6 6 6-6"/>
                 </svg>
               </button>
-
               <AnimatePresence>
                 {showPicker && (
                   <motion.div
@@ -250,9 +245,7 @@ export default function ScheduleWidget() {
                       <button
                         key={d}
                         onClick={() => { setSelDate(d); setShowPicker(false); }}
-                        className={`w-full text-left px-4 py-3 text-[13px] font-semibold transition-colors ${
-                          d === selDate ? 'bg-blue-600 text-white' : 'text-[#777] hover:text-white hover:bg-white/5'
-                        }`}
+                        className={`w-full text-left px-4 py-3 text-[13px] font-bold transition-colors ${d === selDate ? 'bg-blue-600 text-white' : 'text-[#777] hover:text-white hover:bg-white/5'}`}
                       >
                         {dateLabel(d)}
                       </button>
@@ -261,43 +254,40 @@ export default function ScheduleWidget() {
                 )}
               </AnimatePresence>
             </div>
-
-            <NavBtn disabled={!canNext} dir="right" onClick={() => setSelDate(availDates[dateIdx + 1])} />
+            <NavBtn disabled={dateIdx >= availDates.length - 1} dir="right" onClick={() => setSelDate(availDates[dateIdx + 1])} />
           </div>
         )}
       </div>
 
-      {/* ── Content ── */}
       <AnimatePresence mode="wait">
         {loading ? (
-          <motion.div key="loader" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="flex justify-center py-24">
+          <motion.div key="loader" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex justify-center py-24">
             <div className="w-7 h-7 rounded-full border-2 border-white/8 border-t-[#007AFF] animate-spin" />
           </motion.div>
         ) : filtered.length === 0 ? (
-          <motion.div key="empty" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-            className="py-20 text-center">
-            <p className="text-[#333] text-[15px] font-medium">
-              {tab === 'upcoming' && 'Матчей на эту дату нет'}
-              {tab === 'live'     && 'Сейчас нет активных матчей'}
-              {tab === 'finished' && 'Завершённых матчей нет'}
+          <motion.div key="empty" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="py-20 text-center">
+            <p className="text-[#333] text-[15px] font-bold">
+              {tab === 'upcoming' ? 'Матчей на эту дату нет' : tab === 'live' ? 'Сейчас нет активных матчей' : 'Завершённых матчей нет'}
             </p>
           </motion.div>
         ) : (
-          <motion.div key={`${tab}-${selDate}`} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.22 }}
+          <motion.div
+            key={`${tab}-${selDate}`}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.22 }}
             className="flex flex-col gap-3"
           >
             {Array.from(groups.entries()).map(([tournament, tMatches]) => {
-              const key  = `${tab}__${tournament}`;
-              const open = openGroups.has(key);
+              const key = `${tab}__${tournament}`;
               return (
                 <TournamentCard
                   key={key}
                   tournament={tournament}
                   country={tMatches[0]?.tournamentCountry}
                   matches={tMatches}
-                  isOpen={open}
+                  isOpen={openGroups.has(key)}
                   onToggle={() => toggleGroup(key)}
                   tab={tab}
                 />
@@ -318,16 +308,9 @@ function TabPill({ value, active, onClick }: { value: Tab; active: boolean; onCl
     finished: 'Завершённые',
   };
   return (
-    <button onClick={onClick} className="relative px-5 py-2.5 rounded-full text-[14px] font-semibold transition-all duration-200 whitespace-nowrap">
-      {active && (
-        <motion.div layoutId="tab-pill-bg"
-          className="absolute inset-0 bg-[#007AFF] rounded-full"
-          transition={{ type: 'spring', stiffness: 500, damping: 38 }}
-        />
-      )}
-      <span className={`relative z-10 transition-colors duration-200 ${active ? 'text-white' : 'text-[#555] hover:text-[#888]'}`}>
-        {labels[value]}
-      </span>
+    <button onClick={onClick} className="relative px-5 py-2.5 rounded-full text-[14px] font-bold transition-all duration-200 whitespace-nowrap">
+      {active && <motion.div layoutId="tab-pill-bg" className="absolute inset-0 bg-[#007AFF] rounded-full" transition={{ type: 'spring', stiffness: 500, damping: 38 }} />}
+      <span className={`relative z-10 transition-colors duration-200 ${active ? 'text-white' : 'text-[#555] hover:text-[#888]'}`}>{labels[value]}</span>
     </button>
   );
 }
@@ -335,7 +318,9 @@ function TabPill({ value, active, onClick }: { value: Tab; active: boolean; onCl
 // ─── Nav Button ───────────────────────────────────────────────────────────────
 function NavBtn({ onClick, disabled, dir }: { onClick: () => void; disabled: boolean; dir: 'left'|'right' }) {
   return (
-    <button onClick={onClick} disabled={disabled}
+    <button
+      onClick={onClick}
+      disabled={disabled}
       className="w-11 h-11 rounded-full border border-[#2a2a2a] bg-[#111] flex items-center justify-center transition-all duration-200 hover:border-[#333] hover:bg-[#171717] active:scale-95 disabled:opacity-20 disabled:pointer-events-none"
     >
       <svg className="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -347,33 +332,23 @@ function NavBtn({ onClick, disabled, dir }: { onClick: () => void; disabled: boo
 
 // ─── Tournament Card ──────────────────────────────────────────────────────────
 function TournamentCard({ tournament, country, matches, isOpen, onToggle, tab }: {
-  tournament: string;
-  country?: string;
-  matches: FormattedMatch[];
-  isOpen: boolean;
-  onToggle: () => void;
-  tab: Tab;
+  tournament: string; country?: string; matches: FormattedMatch[];
+  isOpen: boolean; onToggle: () => void; tab: Tab;
 }) {
   return (
     <div className="rounded-2xl border border-[#1c1c1e] bg-[#0e0e0f] overflow-hidden">
-
-      {/* Tournament header */}
-      <button onClick={onToggle}
-        className="w-full flex items-center justify-between px-5 sm:px-6 py-4 hover:bg-white/2 transition-colors text-left"
-      >
+      <button onClick={onToggle} className="w-full flex items-center justify-between px-5 sm:px-6 py-4 hover:bg-white/2 transition-colors text-left">
         <div className="flex items-center gap-3 min-w-0">
           {country && <span className="text-lg leading-none shrink-0">{country}</span>}
-          <span className="text-white text-[15px] font-semibold truncate">{tournament}</span>
+          <span className="text-white text-[15px] font-bold truncate">{tournament}</span>
         </div>
         <div className="flex items-center gap-3 ml-4 shrink-0">
-          {tab === 'live' && matches.length > 0 && (
+          {tab === 'live' ? (
             <span className="flex items-center gap-1.5 text-red-500 text-[12px] font-bold uppercase tracking-widest">
-              <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"/>
-              {matches.length}
+              <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"/>{matches.length}
             </span>
-          )}
-          {tab !== 'live' && (
-            <span className="text-[#333] text-[13px] font-medium">{matches.length}</span>
+          ) : (
+            <span className="text-[#333] text-[13px] font-bold">{matches.length}</span>
           )}
           <motion.div animate={{ rotate: isOpen ? 180 : 0 }} transition={{ duration: 0.25, ease: [0.4,0,0.2,1] }}>
             <svg className="w-4 h-4 text-[#3a3a3a]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -383,7 +358,6 @@ function TournamentCard({ tournament, country, matches, isOpen, onToggle, tab }:
         </div>
       </button>
 
-      {/* Match rows */}
       <AnimatePresence initial={false}>
         {isOpen && (
           <motion.div
@@ -394,17 +368,15 @@ function TournamentCard({ tournament, country, matches, isOpen, onToggle, tab }:
             style={{ overflow: 'hidden' }}
           >
             <div className="border-t border-[#161618]">
-              {/* Column headers */}
-              <div className="grid gap-4 px-5 sm:px-6 pt-3 pb-1.5"
+              <div
+                className={`grid gap-4 pl-5 sm:pl-6 pt-3 pb-1.5 ${tab === 'finished' ? 'pr-5 sm:pr-6 lg:pr-46.25' : 'pr-5 sm:pr-6'}`}
                 style={{ gridTemplateColumns: tab === 'upcoming' ? '5rem 1fr auto auto' : '4rem 1fr auto' }}
               >
-                <span className="text-[11px] font-semibold text-[#2e2e2e] uppercase tracking-widest">Время</span>
-                {tab === 'upcoming' && <span className="text-[11px] font-semibold text-[#2e2e2e] uppercase tracking-widest">Стадион</span>}
-                {tab !== 'upcoming' && <span/>}
-                <span className="text-[11px] font-semibold text-[#2e2e2e] uppercase tracking-widest col-start-3">Счёт</span>
+                <span className="text-[11px] font-bold text-[#2e2e2e] uppercase tracking-widest">Время</span>
+                {tab === 'upcoming' ? <span className="text-[11px] font-bold text-[#2e2e2e] uppercase tracking-widest">Стадион</span> : <span/>}
+                <span className="text-[11px] font-bold text-[#2e2e2e] uppercase tracking-widest col-start-3 text-left pl-1">Счёт</span>
                 {tab === 'upcoming' && <span/>}
               </div>
-
               {matches.map((m, idx) => (
                 <React.Fragment key={m.id}>
                   {idx > 0 && <div className="mx-5 sm:mx-6 h-px bg-[#131315]"/>}
@@ -424,39 +396,31 @@ function MatchRow({ match, tab }: { match: FormattedMatch; tab: Tab }) {
   const isLive     = tab === 'live';
   const isFinished = tab === 'finished';
   const isUpcoming = tab === 'upcoming';
-  const sets = parseSets(match.score, isLive);
-  const p1Won = sets.filter(s => s.finished && +s.p1 > +s.p2).length;
-  const p2Won = sets.filter(s => s.finished && +s.p2 > +s.p1).length;
+
+  const sets = (isLive || isFinished) ? parseSets(match.score, isLive) : [];
+  const gameScore = isLive ? extractGameScore(match.score) : null;
+
+  const p1SetsWon = sets.filter(s => s.finished && parseInt(s.p1) > parseInt(s.p2)).length;
+  const p2SetsWon = sets.filter(s => s.finished && parseInt(s.p2) > parseInt(s.p1)).length;
 
   return (
-    <div className="px-5 sm:px-6 py-4 sm:py-5 flex items-center gap-4">
-
+    <div className={`pl-5 sm:pl-6 py-4 sm:py-5 flex items-center gap-4 sm:gap-6 ${tab === 'finished' ? 'pr-5 sm:pr-6 lg:pr-46.25' : 'pr-5 sm:pr-6'}`}>
       {/* Time */}
-      <div className="shrink-0 w-16 sm:w-20 flex flex-col gap-1">
+      <div className="shrink-0 w-16 sm:w-20 flex flex-col gap-0.5">
         {isLive ? (
           <span className="text-red-500 text-[11px] font-bold tracking-[0.18em] uppercase">Live</span>
         ) : (
           <>
-            <span className="text-[#007AFF] text-[20px] sm:text-[22px] font-bold leading-none tabular-nums tracking-tight">
-              {match.time}
-            </span>
-            {isUpcoming && (
-              <span className="text-[#333] text-[12px] font-medium leading-none mt-0.5">
-                {match.dateLabel}
-              </span>
-            )}
+            <span className="text-[#007AFF] text-[20px] sm:text-[22px] font-bold leading-none tabular-nums tracking-tight">{match.time}</span>
+            {isUpcoming && <span className="text-[#333] text-[12px] font-bold leading-none mt-0.5">{match.dateLabel}</span>}
           </>
         )}
       </div>
 
-      {/* Court (upcoming only) */}
+      {/* Court */}
       {isUpcoming && (
         <div className="hidden sm:block shrink-0 w-40 lg:w-52">
-          {match.court && (
-            <span className="text-[#3a3a3a] text-[13px] font-medium leading-snug">
-              {match.court}
-            </span>
-          )}
+          {match.court && <span className="text-[#3a3a3a] text-[13px] font-bold leading-snug">{match.court}</span>}
         </div>
       )}
 
@@ -467,26 +431,28 @@ function MatchRow({ match, tab }: { match: FormattedMatch; tab: Tab }) {
           country={match.player1Country}
           rank={match.player1Rank}
           isServing={isLive && match.serving === '1'}
-          isWinner={isFinished && p1Won > p2Won}
-          isFinished={isFinished}
+          setsWon={p1SetsWon}
           sets={sets}
           playerIdx={0}
           isLive={isLive}
+          isFinished={isFinished}
+          gameScore={gameScore?.p1 ?? null}
         />
         <PlayerLine
           name={match.player2}
           country={match.player2Country}
           rank={match.player2Rank}
           isServing={isLive && match.serving === '2'}
-          isWinner={isFinished && p2Won > p1Won}
-          isFinished={isFinished}
+          setsWon={p2SetsWon}
           sets={sets}
           playerIdx={1}
           isLive={isLive}
+          isFinished={isFinished}
+          gameScore={gameScore?.p2 ?? null}
         />
       </div>
 
-      {/* H2H (upcoming only) */}
+      {/* H2H */}
       {isUpcoming && (
         <div className="shrink-0">
           <button className="px-5 sm:px-6 py-2.5 rounded-full bg-[#007AFF] hover:bg-[#0066ee] active:scale-95 transition-all duration-150 text-white text-[13px] sm:text-[14px] font-bold tracking-wide whitespace-nowrap">
@@ -498,78 +464,117 @@ function MatchRow({ match, tab }: { match: FormattedMatch; tab: Tab }) {
   );
 }
 
-// ─── Player Line ──────────────────────────────────────────────────────────────
-function PlayerLine({ name, country, rank, isServing, isWinner, isFinished, sets, playerIdx, isLive }: {
-  name: string;
-  country?: string;
-  rank?: number;
-  isServing: boolean;
-  isWinner: boolean;
-  isFinished: boolean;
-  sets: SetScore[];
-  playerIdx: 0 | 1;
-  isLive: boolean;
-}) {
-  const nameColor = isFinished
-    ? isWinner ? 'text-white' : 'text-[#747781]'
-    : 'text-white';
+// ─── UI Badges ────────────────────────────────────────────────────────────────
+function SetsBadge({ setsWon }: { setsWon: number }) {
+  return (
+    <div className="relative flex items-center justify-center shrink-0 w-7 h-8.5 sm:w-8 sm:h-10">
+      <svg className="absolute inset-0 w-full h-full" viewBox="0 0 49 59" fill="none" preserveAspectRatio="none">
+        <rect x="0.5" y="0.5" width="48" height="58" rx="14.5" stroke="url(#sets-grad)"/>
+        <defs>
+          <linearGradient id="sets-grad" x1="0" y1="0" x2="49" y2="59" gradientUnits="userSpaceOnUse">
+            <stop stopColor="#6D6D6D"/><stop offset="1" stopColor="#D3D3D3"/>
+          </linearGradient>
+        </defs>
+      </svg>
+      <span className="relative text-white text-[16px] sm:text-[18px] font-bold tabular-nums leading-none">
+        {setsWon}
+      </span>
+    </div>
+  );
+}
+
+function GameBadge({ score }: { score: string }) {
+  return (
+    <div className="flex items-center justify-center shrink-0 bg-blue-600 rounded-lg sm:rounded-[10px] w-9 h-7 sm:w-12 sm:h-9">
+      <span className="text-white text-[16px] sm:text-[18px] font-bold tabular-nums leading-none">
+        {score}
+      </span>
+    </div>
+  );
+}
+
+function SetScoreBlock({ score, playerIdx }: { score: ParsedSet; playerIdx: 0 | 1 }) {
+  const my  = playerIdx === 0 ? score.p1 : score.p2;
+  const opp = playerIdx === 0 ? score.p2 : score.p1;
+  const tb  = playerIdx === 0 ? score.tb1 : score.tb2;
+
+  const won  = score.finished && parseInt(my) > parseInt(opp);
+  const lost = score.finished && parseInt(my) < parseInt(opp);
+
+  const color   = won ? 'text-white' : lost ? 'text-[#747781]' : 'text-white';
+  const tbColor = won ? 'text-white' : 'text-[#747781]';
 
   return (
-    <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+    <div className="flex items-start justify-center w-4 sm:w-5 shrink-0">
+      <span className={`text-[16px] sm:text-[18px] font-bold tabular-nums leading-none ${color}`}>{my}</span>
+      {tb && (
+        <sup className={`text-[10px] sm:text-[11px] font-bold leading-none ${tbColor} -mt-0.5 ml-px`}>
+          {tb}
+        </sup>
+      )}
+    </div>
+  );
+}
 
-      {/* Serving indicator */}
-      <div className="w-3 shrink-0 flex items-center justify-center">
-        {isServing && (
-          <span className="relative flex h-2.5 w-2.5">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-50"/>
-            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"/>
+// ─── Player Line ──────────────────────────────────────────────────────────────
+function PlayerLine({
+  name, country, rank, isServing, setsWon, sets, playerIdx, isLive, isFinished, gameScore,
+}: {
+  name: string; country?: string; rank?: number;
+  isServing: boolean; setsWon: number;
+  sets: ParsedSet[]; playerIdx: 0 | 1;
+  isLive: boolean; isFinished: boolean; gameScore: string | null;
+}) {
+  return (
+    <div className="flex items-center w-full">
+      {/* LEFT: Names */}
+      <div className="flex items-center gap-3 min-w-0 pr-4 flex-1">
+        {country && <span className="text-base sm:text-lg leading-none shrink-0">{country}</span>}
+        <span className="text-[16px] sm:text-[18px] font-bold leading-none truncate text-white">
+          {name}
+        </span>
+        {rank != null && (
+          <span className="text-[#747781] text-[12px] sm:text-[13px] font-bold shrink-0 tabular-nums">
+            {rank}
           </span>
         )}
       </div>
 
-      {/* Flag */}
-      {country && <span className="text-base leading-none shrink-0">{country}</span>}
-
-      {/* Name */}
-      <span className={`text-[16px] sm:text-[17px] font-semibold leading-none truncate flex-1 transition-colors ${nameColor}`}>
-        {name}
-      </span>
-
-      {/* Rank */}
-      {rank && (
-        <span className="text-[#747781] text-[12px] font-medium shrink-0 tabular-nums">
-          {rank}
-        </span>
-      )}
-
-      {/* Score */}
-      {(isLive || isFinished) && sets.length > 0 && (
-        <div className="flex items-center gap-1.5 shrink-0 ml-1">
-          {sets.map((set, i) => {
-            const my  = playerIdx === 0 ? set.p1 : set.p2;
-            const opp = playerIdx === 0 ? set.p2 : set.p1;
-            const won  = set.finished && +my > +opp;
-            const lost = set.finished && +my < +opp;
-            const isCurrent = !set.finished && isLive;
-
-            if (isCurrent) {
-              return (
-                <div key={i} className="flex items-center justify-center w-8 h-7 rounded-lg bg-[#007AFF]">
-                  <span className="text-white text-[13px] font-bold leading-none tabular-nums">{my}</span>
-                </div>
-              );
-            }
-
-            return (
-              <span key={i} className={`text-[15px] sm:text-[16px] font-bold tabular-nums w-5 text-center leading-none ${
-                won ? 'text-white' : lost ? 'text-[#747781]' : 'text-white'
-              }`}>
-                {my}
-              </span>
-            );
-          })}
+      {/* RIGHT: Score */}
+      <div className="flex items-center justify-start gap-2 sm:gap-3 shrink-0 w-40 sm:w-55 lg:w-65">
+        {/* Serve dot */}
+        <div className="w-2 sm:w-2.5 flex justify-center shrink-0">
+          {isServing && (
+            <span className="relative flex w-2 h-2 sm:w-2.5 sm:h-2.5">
+              <span className="animate-ping absolute inset-0 rounded-full bg-[#FF3B30] opacity-50"/>
+              <span className="relative block rounded-full bg-[#FF3B30] w-full h-full"/>
+            </span>
+          )}
         </div>
-      )}
+
+        {/* Sets badge */}
+        {(isLive || isFinished) && (
+          <>
+            <SetsBadge setsWon={setsWon} />
+            {sets.length > 0 && (
+              <div className="flex items-center gap-3 sm:gap-4 ml-1 sm:ml-2">
+                {sets.map((s, i) => (
+                  <SetScoreBlock key={i} score={s} playerIdx={playerIdx} />
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Game badge (LIVE only) */}
+        {isLive && (
+          <div className="w-9 sm:w-12 shrink-0 ml-2">
+            {gameScore != null && gameScore !== '-' && (
+              <GameBadge score={gameScore} />
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
