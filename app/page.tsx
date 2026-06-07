@@ -8,7 +8,7 @@ import ScheduleWidget from '@/components/ScheduleWidget';
 import NewsSection from '@/components/NewsSection';
 import { getNewsPosts, getBroadcastPosts } from '@/lib/news';
 import { WPPost } from '@/types';
-
+import PromoBanner from '@/components/PromoBanner';
 export const dynamic = 'force-dynamic'; // ← добавь это
 
 export const metadata: Metadata = {
@@ -32,7 +32,7 @@ export default async function Home() {
       <Header />
 
       <HeroLive post={mainLivePost} relatedPosts={posts} />
-
+      <PromoBanner />
       <BroadcastCarousel posts={posts} />
 
       {/* Виджет турниров из Supabase */}

@@ -8,6 +8,7 @@ const nextConfig: NextConfig = {
       { hostname: 'www.primesport.online' },
       // Supabase Storage
       { hostname: 'ufreolzgexjgrpfbpynz.supabase.co' },
+      { hostname: 'flagcdn.com' },
     ],
   },
 };

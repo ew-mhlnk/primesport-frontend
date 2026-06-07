@@ -112,7 +112,7 @@ export default function HeroLive({ post, relatedPosts = [] }: HeroLiveProps) {
     <div className="flex flex-col lg:block">
 
       {/* ══ ГЕРОЙ ══ */}
-      <div className="relative w-full overflow-hidden bg-black h-[62svh] lg:h-[100svh]">
+      <div className="relative w-full overflow-hidden bg-black h-[62svh] lg:h-[calc(100svh_-_210px)]">
 
         {/* Слой 1: Видео / постер */}
         {embedSrc ? (
